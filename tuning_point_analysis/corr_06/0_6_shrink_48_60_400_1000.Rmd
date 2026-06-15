@@ -1,0 +1,436 @@
+---
+title: "Local refinement scan | J = 48-60 | factor_corr = 0.6 | N = 500-1000"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+date: "2026-05-06"
+---
+
+# Purpose
+
+This file runs a narrower refinement scan for `factor_corr = 0.6`, with `J = 48-60`.  
+The N range is restricted to 500-1000 to zoom in on the crossing region identified in the broader scan.  
+It compares lslx and CC-ESEM across this range and saves the summary results.
+
+
+```{r setup, include=FALSE}
+
+# Load the required helper scripts. Replace the example paths with your own local paths.
+source("C:/Users/YourName/Desktop/BEP/R/rESEM-CC.R")
+source("C:/Users/YourName/Desktop/BEP/R/generation_function.R")
+
+# Load required packages
+library(MASS); library(lavaan); library(lslx)
+```
+
+```{r helper_functions}
+# ------------------------------------------------------------
+# build_lslx_model()
+#   Constructs the lslx model string for a J-item, n_factors-factor EFA.
+#   Each factor has J/n_factors "primary" items (free loadings, :=>)
+#   and the remaining items as "cross-loadings" (penalised, :~>).
+#   Factor variances are fixed to 1.
+#   Note: factor covariances are NOT constrained here, allowing
+#   oblique factors consistent with factor_corr = 0.6.
+# ------------------------------------------------------------
+build_lslx_model <- function(J, n_factors = 3) {
+  J_per_factor <- J / n_factors          # number of items per factor
+  lines <- c()
+
+  # Primary (free) loadings: factor k loads freely on its own items
+  for (k in 1:n_factors) {
+    main_items <- paste0("x", ((k-1)*J_per_factor + 1):(k*J_per_factor))
+    lines <- c(lines, paste0("f", k, " :=> ", paste(main_items, collapse = " + ")))
+  }
+
+  # Cross-loadings (penalised): factor k is allowed to load on items from other factors
+  for (k in 1:n_factors) {
+    other_items <- paste0("x", setdiff(1:J, ((k-1)*J_per_factor + 1):(k*J_per_factor)))
+    lines <- c(lines, paste0("f", k, " :~> ", paste(other_items, collapse = " + ")))
+  }
+
+  # Fix each factor's variance to 1 (standardise factors)
+  for (k in 1:n_factors)
+    lines <- c(lines, paste0("f", k, " <=> fix(1) * f", k))
+
+  paste(lines, collapse = "\n")
+}
+
+# ------------------------------------------------------------
+# align_loadings()
+#   Matches estimated factors to the true factors by maximum
+#   absolute correlation (greedy assignment), then flips sign
+#   where needed so that each estimated column correlates
+#   positively with its matched true column.
+#   Returns the re-ordered and sign-corrected loading matrix.
+# ------------------------------------------------------------
+align_loadings <- function(Lambda_est, Lambda_true) {
+  n_factors <- ncol(Lambda_true)
+
+  # Build an n_factors x n_factors matrix of absolute correlations
+  # between every pair of (estimated factor, true factor) columns
+  cor_mat <- matrix(NA, n_factors, n_factors)
+  for (i in 1:n_factors)
+    for (j in 1:n_factors)
+      cor_mat[i, j] <- abs(cor(Lambda_est[, i], Lambda_true[, j]))
+
+  # Greedy matching: for each true factor j, pick the estimated factor
+  # with the highest absolute correlation (that has not been used yet)
+  order_est <- rep(NA, n_factors); used <- rep(FALSE, n_factors)
+  for (j in 1:n_factors) {
+    best_i <- which.max(cor_mat[, j] * (!used))
+    order_est[j] <- best_i; used[best_i] <- TRUE
+  }
+
+  # Re-order estimated loading columns to match true factor order
+  Lambda_aligned <- Lambda_est[, order_est]
+
+  # Flip sign of each column if it correlates negatively with the true column
+  for (j in 1:n_factors)
+    if (cor(Lambda_aligned[, j], Lambda_true[, j]) < 0)
+      Lambda_aligned[, j] <- -Lambda_aligned[, j]
+
+  colnames(Lambda_aligned) <- paste0("f", 1:n_factors)
+  return(Lambda_aligned)
+}
+
+# ------------------------------------------------------------
+# run_lslx()
+#   factor_corr = 0.6 version: data is z-scored before fitting,
+#   and lambda_grid is fixed to seq(0, 0.1, 0.05).
+#   Fits a LASSO-penalised SEM via lslx::plsem() on one dataset.
+#   Steps:
+#     1. z-score the data
+#     2. build the model string
+#     3. fit with a small lambda grid; select lambda by BIC
+#     4. extract the loading matrix ("y<-f" block)
+#     5. optionally align to the true loadings
+#   Returns a list: converged (TRUE/FALSE) and loadings (matrix or NULL).
+# ------------------------------------------------------------
+run_lslx <- function(X, J, n_factors = 3, Lambda_true = NULL) {
+  # Standardise data (lslx expects this for interpretable penalties)
+  X_df <- as.data.frame(scale(as.matrix(X)))
+  colnames(X_df) <- paste0("x", 1:J)
+  model <- build_lslx_model(J = J, n_factors = n_factors)
+  result <- tryCatch({
+    fit <- plsem(model = model, data = X_df,
+                 penalty_method = "lasso", lambda_grid = seq(0.00, 0.10, 0.05))
+
+    # Extract loading matrix selected by BIC
+    lm <- fit$extract_coefficient_matrix(selector = "bic", block = "y<-f")$g
+    rownames(lm) <- paste0("x", 1:J)
+    colnames(lm) <- paste0("f", 1:n_factors)
+    if (!is.null(Lambda_true)) lm <- align_loadings(lm, Lambda_true)
+    list(converged = TRUE, loadings = lm)
+  }, error = function(e) list(converged = FALSE, loadings = NULL))
+  return(result)
+}
+
+# ------------------------------------------------------------
+# run_approxESEM()
+#   Fits the CC-regularized ESEM (cardinality-constrained)
+#   via MULTISTART_CCrESEM() with multiple random starts.
+#   Steps:
+#     1. set default cardinality = J/n_factors per factor
+#     2. z-score the data
+#     3. run multi-start optimisation
+#     4. optionally align to the true loadings
+#   Returns a list: converged and loadings.
+# ------------------------------------------------------------
+run_approxESEM <- function(X, J, n_factors = 3, card = NULL,
+                           nstarts = 20, Lambda_true = NULL) {
+  # Default: each factor is allowed to load on J/n_factors items
+  if (is.null(card)) card <- rep(J / n_factors, n_factors)
+  X_scaled <- scale(as.matrix(X))
+  result <- tryCatch({
+    fit <- MULTISTART_CCrESEM(DATA = X_scaled, R = n_factors, CARD = card,
+                              MaxIter = 1000, eps = 1e-6, nstarts = nstarts)
+    lm <- fit$loadings
+    rownames(lm) <- paste0("x", 1:J)
+    colnames(lm) <- paste0("f", 1:n_factors)
+    if (!is.null(Lambda_true)) lm <- align_loadings(lm, Lambda_true)
+    list(converged = fit$converged, loadings = lm)
+  }, error = function(e) list(converged = FALSE, loadings = NULL))
+  return(result)
+}
+```
+
+```{r main_scan}
+
+# Main simulation scan
+#   Narrowed N range (500-1000) compared to the broader J48-60 scan,
+#   targeting the crossing region identified in the initial pass.
+#   For each combination of (J, N) we run n_rep = 50 replications,
+#   fit both lslx and CC-ESEM, and collect:
+#     - MSE  (mean squared error of loading estimates vs. true loadings)
+#     - AB   (average absolute bias)
+#     - Var  (average variance of loading estimates across replications)
+#     - Runtime (elapsed seconds per fit)
+#     - Convergence rate for lslx
+
+set.seed(42)
+n_rep <- 50    # number of Monte Carlo replications per (J, N) cell
+
+# N grids to scan for each value of J (uniform 500-1000, step 100)
+scan_grid <- list(
+  "48" = seq(500, 1000, by = 100),
+  "51" = seq(500, 1000, by = 100),
+  "54" = seq(500, 1000, by = 100),
+  "57" = seq(500, 1000, by = 100),
+  "60" = seq(500, 1000, by = 100)
+)
+
+J_seq_main <- c(48, 51, 54, 57, 60)
+results_all <- list()   # will accumulate one data.frame row per (J, N) cell
+
+cat("=== Full scan: J = 48-60, factor_corr = 0.6, N = 500-1000 ===\n\n")
+
+for (J in J_seq_main) {
+  N_vec <- scan_grid[[as.character(J)]]
+  cat(">> J =", J, "| N:", min(N_vec), "~", max(N_vec),
+      "| step: 100 |", length(N_vec), "N values x 50 reps\n")
+
+  for (N in N_vec) {
+    # Pre-allocate storage for this (J, N) cell
+    lslx_lm_list  <- vector("list", n_rep)   # loading matrices from lslx
+    esem_lm_list  <- vector("list", n_rep)   # loading matrices from CC-ESEM
+    lslx_conv     <- logical(n_rep)          # convergence flag for lslx
+    lslx_time_vec <- numeric(n_rep)          # elapsed time for lslx
+    esem_time_vec <- numeric(n_rep)          # elapsed time for CC-ESEM
+
+    for (rep in 1:n_rep) {
+      # Generate one dataset from the true factor model
+      # PL = primary loading size; reliability = 0.36; factor_corr = 0.6 (oblique)
+      dgp <- data_generation(
+        PL = 0.6, nvar.factor = J / 3, nfactors = 3,
+        reliability = 0.36, factor_corr = 0.6,
+        N = N, beta = c(0.5, 0.3, 0.2), VAFy = 0.5, CL = FALSE
+      )
+
+      # Fit both methods and record elapsed time
+      t1 <- system.time({ r1 <- run_lslx(X = dgp$X, J = J, Lambda_true = dgp$Ptrue) })
+      t2 <- system.time({ r2 <- run_approxESEM(X = dgp$X, J = J, Lambda_true = dgp$Ptrue) })
+
+      lslx_conv[rep]      <- r1$converged
+      lslx_lm_list[[rep]] <- if (r1$converged) r1$loadings else NULL
+      esem_lm_list[[rep]] <- if (r2$converged) r2$loadings else NULL
+      lslx_time_vec[rep]  <- t1["elapsed"]
+      esem_time_vec[rep]  <- t2["elapsed"]
+    }
+
+    Lambda_true <- dgp$Ptrue   # true loading matrix (same across reps for this cell)
+
+    # Keep only successful (non-NULL) replications
+    lslx_valid <- Filter(Negate(is.null), lslx_lm_list)
+    esem_valid <- Filter(Negate(is.null), esem_lm_list)
+
+    # --- Compute summary statistics for lslx ---
+    if (length(lslx_valid) > 1) {
+      lslx_arr     <- simplify2array(lslx_valid)          # J x n_factors x n_valid array
+      lslx_mean_lm <- apply(lslx_arr, c(1, 2), mean)     # element-wise mean over reps
+
+      # MSE: for each rep compute mean squared error, then average across reps
+      lslx_mse_vec <- sapply(lslx_valid, function(lm) mean((lm - Lambda_true)^2))
+      lslx_mse     <- mean(lslx_mse_vec); lslx_mse_sd <- sd(lslx_mse_vec)
+
+      # Average absolute bias: |mean estimate - true value|, averaged over all elements
+      lslx_ab  <- mean(abs(lslx_mean_lm - Lambda_true))
+
+      # Average variance of each loading across replications
+      lslx_var <- mean(apply(lslx_arr, c(1, 2), var))
+    } else { lslx_mse <- NA; lslx_mse_sd <- NA; lslx_ab <- NA; lslx_var <- NA }
+
+    # --- Compute summary statistics for CC-ESEM ---
+    if (length(esem_valid) > 1) {
+      esem_arr     <- simplify2array(esem_valid)
+      esem_mean_lm <- apply(esem_arr, c(1, 2), mean)
+
+      esem_mse_vec <- sapply(esem_valid, function(lm) mean((lm - Lambda_true)^2))
+      esem_mse     <- mean(esem_mse_vec); esem_mse_sd <- sd(esem_mse_vec)
+      esem_ab      <- mean(abs(esem_mean_lm - Lambda_true))
+      esem_var     <- mean(apply(esem_arr, c(1, 2), var))
+    } else { esem_mse <- NA; esem_mse_sd <- NA; esem_ab <- NA; esem_var <- NA }
+
+    # Store one row of results for this (J, N) combination
+    results_all[[paste0("J", J, "_N", N)]] <- data.frame(
+      J = J, N = N, JN_ratio = round(J / N, 5),    # item-to-sample ratio
+      lslx_mse_mean = lslx_mse, lslx_mse_sd = lslx_mse_sd,
+      esem_mse_mean = esem_mse, esem_mse_sd = esem_mse_sd,
+      mse_diff  = esem_mse - lslx_mse,              # positive = ESEM worse
+      lslx_ab   = lslx_ab,  esem_ab  = esem_ab,  ab_diff  = esem_ab  - lslx_ab,
+      lslx_var  = lslx_var, esem_var = esem_var,  var_diff = esem_var - lslx_var,
+      lslx_time = mean(lslx_time_vec), esem_time = mean(esem_time_vec),
+      lslx_conv_rate = mean(lslx_conv)               # proportion of reps that converged
+    )
+  }
+  cat("   Done: J =", J, "\n\n")
+}
+
+# Combine all rows into a single data frame, sorted by J then N
+tp_df <- do.call(rbind, results_all)
+tp_df <- tp_df[order(tp_df$J, tp_df$N), ]
+rownames(tp_df) <- NULL
+cat("=== Scan complete:", nrow(tp_df), "rows ===\n")
+```
+
+```{r print_tables}
+
+# Print summary tables and automatically detect MSE crossings
+#   A "crossing" is a J/N ratio where lslx and CC-ESEM swap
+#   which method has lower MSE (mse_diff changes sign).
+
+crossing_summary <- list()
+
+cat("\n====== MSE difference table & crossing intervals ======\n")
+
+for (J in J_seq_main) {
+  sub   <- tp_df[tp_df$J == J, ]; sub <- sub[order(sub$N), ]
+
+  # Find indices where the sign of mse_diff flips (crossing point)
+  cross <- which(diff(sign(sub$mse_diff)) != 0)
+
+  cat("\n--- J =", J, "---\n")
+  print(sub[, c("N", "JN_ratio", "lslx_mse_mean", "esem_mse_mean",
+                "mse_diff", "lslx_ab", "esem_ab", "lslx_var", "esem_var",
+                "lslx_conv_rate")], digits = 4, row.names = FALSE)
+
+  if (length(cross) > 0) {
+    N_lo <- sub$N[cross]; N_hi <- sub$N[cross+1]
+    JN_lo <- sub$JN_ratio[cross+1]; JN_hi <- sub$JN_ratio[cross]
+    JN_mid <- round(mean(c(JN_lo, JN_hi)), 5)
+    cat("  * MSE Crossing: N in [", N_lo, ",", N_hi, "]",
+        "| J/N in [", round(JN_lo,4), ",", round(JN_hi,4), "]",
+        "| midpoint J/N ~", JN_mid, "\n")
+    crossing_summary[[as.character(J)]] <- data.frame(
+      J=J, N_lo=N_lo, N_hi=N_hi, JN_lo=JN_lo, JN_hi=JN_hi, JN_mid=JN_mid)
+  } else {
+    cat("  [!] No MSE crossing detected in the current N range\n")
+    crossing_summary[[as.character(J)]] <- data.frame(
+      J=J, N_lo=NA, N_hi=NA, JN_lo=NA, JN_hi=NA, JN_mid=NA)
+  }
+}
+
+# Summarise all crossing points in a single table
+crossing_df <- do.call(rbind, crossing_summary)
+rownames(crossing_df) <- NULL
+cat("\n====== MSE Crossing Summary ======\n")
+print(crossing_df, row.names=FALSE, digits=5)
+```
+
+```{r plot_mse_diff}
+
+# Plot: MSE difference (ESEM - lslx) vs N
+#   One panel per J value.
+#   The horizontal dashed line at 0 marks the break-even point.
+#   Vertical dotted lines bracket the crossing interval when detected.
+
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+for (J in J_seq_main) {
+  sub   <- tp_df[tp_df$J == J, ]; sub <- sub[order(sub$N), ]
+  cross <- which(diff(sign(sub$mse_diff)) != 0)
+  y <- sub$mse_diff; ylim <- range(y, na.rm=TRUE); ylim <- ylim + c(-0.05,0.20)*diff(ylim)
+  plot(sub$N, y, type="b", pch=16, col="#2A9D8F", lwd=2, lty=2,
+       xlab="N", ylab="MSE diff (ESEM - lslx)", main=paste0("J = ",J), ylim=ylim)
+  abline(h=0, lty=2, col="gray50", lwd=1.2)   # break-even line
+  if (length(cross) > 0) {
+    # Mark the two N values that bracket the crossing
+    abline(v=sub$N[cross], lty=3, col="gray40")
+    abline(v=sub$N[cross+1], lty=3, col="gray40")
+    # Annotate with the approximate J/N ratio at the crossing
+    text(mean(c(sub$N[cross],sub$N[cross+1])), max(y,na.rm=TRUE),
+         paste0("J/N ~ ",round(mean(c(sub$JN_ratio[cross],sub$JN_ratio[cross+1])),4)),
+         adj=c(0.5,-0.3), cex=0.85, col="gray20")
+  }
+}
+plot.new()   # empty 6th panel to keep layout symmetric
+mtext("MSE Diff (ESEM - lslx) vs N  |  factor_corr = 0.6  |  N = 500-1000  |  50 reps",
+      outer=TRUE, cex=1.1, font=2)
+par(mfrow = c(1, 1))
+```
+
+```{r plot_mse_abs}
+# ============================================================
+# Plot: Absolute MSE vs N for both methods (with +/-1 SD band)
+#   Red  = lslx
+#   Blue = CC-ESEM
+#   Shaded bands show +/- 1 SD across the 50 replications.
+# ============================================================
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+for (J in J_seq_main) {
+  sub  <- tp_df[tp_df$J == J, ]; sub <- sub[order(sub$N), ]
+
+  # y-axis range covering both methods' mean +/- SD
+  ylim <- range(c(sub$lslx_mse_mean-sub$lslx_mse_sd, sub$esem_mse_mean-sub$esem_mse_sd,
+                  sub$lslx_mse_mean+sub$lslx_mse_sd, sub$esem_mse_mean+sub$esem_mse_sd), na.rm=TRUE)
+
+  # lslx: mean line + SD band
+  plot(sub$N, sub$lslx_mse_mean, type="b", pch=16, col="#E63946", lwd=2,
+       ylim=ylim, xlab="N", ylab="MSE", main=paste0("J = ",J))
+  polygon(c(sub$N,rev(sub$N)),
+          c(sub$lslx_mse_mean+sub$lslx_mse_sd, rev(sub$lslx_mse_mean-sub$lslx_mse_sd)),
+          col=adjustcolor("#E63946",0.15), border=NA)
+
+  # CC-ESEM: mean line + SD band
+  lines(sub$N, sub$esem_mse_mean, type="b", pch=17, col="#457B9D", lwd=2, lty=2)
+  polygon(c(sub$N,rev(sub$N)),
+          c(sub$esem_mse_mean+sub$esem_mse_sd, rev(sub$esem_mse_mean-sub$esem_mse_sd)),
+          col=adjustcolor("#457B9D",0.15), border=NA)
+  legend("topright", legend=c("lslx","CC-ESEM"), col=c("#E63946","#457B9D"),
+         lwd=2, pch=c(16,17), lty=c(1,2), bty="n", cex=0.8)
+}
+plot.new()
+mtext("MSE vs N  |  lslx vs CC-ESEM  |  factor_corr = 0.6  |  N = 500-1000  |  50 reps",
+      outer=TRUE, cex=1.1, font=2)
+par(mfrow = c(1, 1))
+```
+
+```{r plot_ab}
+# ============================================================
+# Figure A: Average Absolute Bias vs N
+#   Bias = |mean estimated loading - true loading|, averaged over
+#   all J x n_factors loading elements.
+#   Lower is better; shows whether estimates are systematically
+#   shifted away from truth.
+# ============================================================
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+for (J in J_seq_main) {
+  sub  <- tp_df[tp_df$J == J, ]; sub <- sub[order(sub$N), ]
+  ylim <- range(c(sub$lslx_ab, sub$esem_ab), na.rm=TRUE)
+  ylim <- ylim + c(-0.02, 0.08)*diff(ylim)
+  plot(sub$N, sub$lslx_ab, type="b", pch=16, col="#E63946", lwd=2,
+       ylim=ylim, xlab="N", ylab="Average Absolute Bias", main=paste0("J = ",J))
+  lines(sub$N, sub$esem_ab, type="b", pch=17, col="#457B9D", lwd=2, lty=2)
+  legend("topright", legend=c("lslx","CC-ESEM"), col=c("#E63946","#457B9D"),
+         lwd=2, pch=c(16,17), lty=c(1,2), bty="n", cex=0.8)
+}
+plot.new()
+mtext("Figure A: Average Absolute Bias vs N  |  factor_corr = 0.6  |  N = 500-1000  |  50 reps",
+      outer=TRUE, cex=1.1, font=2)
+par(mfrow = c(1, 1))
+```
+
+```{r plot_var}
+# ============================================================
+# Figure B: Variance of Loading Estimates vs N
+#   Variance here = average element-wise variance of the loading
+#   matrix across replications.
+#   Lower is better; shows estimation stability as N grows.
+# ============================================================
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+for (J in J_seq_main) {
+  sub  <- tp_df[tp_df$J == J, ]; sub <- sub[order(sub$N), ]
+  ylim <- range(c(sub$lslx_var, sub$esem_var), na.rm=TRUE)
+  ylim <- ylim + c(-0.02, 0.08)*diff(ylim)
+  plot(sub$N, sub$lslx_var, type="b", pch=16, col="#E63946", lwd=2,
+       ylim=ylim, xlab="N", ylab="Average Variance of Loading Estimates",
+       main=paste0("J = ",J))
+  lines(sub$N, sub$esem_var, type="b", pch=17, col="#457B9D", lwd=2, lty=2)
+  legend("topright", legend=c("lslx","CC-ESEM"), col=c("#E63946","#457B9D"),
+         lwd=2, pch=c(16,17), lty=c(1,2), bty="n", cex=0.8)
+}
+plot.new()
+mtext("Figure B: Variance of Loading Estimates vs N  |  factor_corr = 0.6  |  N = 500-1000  |  50 reps",
+      outer=TRUE, cex=1.1, font=2)
+par(mfrow = c(1, 1))
+```

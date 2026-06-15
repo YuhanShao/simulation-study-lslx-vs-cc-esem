@@ -1,0 +1,470 @@
+---
+title: "Broad scan figure code | factor_corr = 0"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+date: "2026-06-15"
+---
+
+# Purpose
+
+This file contains only the code for the broad-scan 2x2 figures used in the thesis.
+
+It reproduces the two broad scans for `factor_corr = 0`:
+
+- J-scan: fixed `N = 300`, varying `J = 9, 12, ..., 45`
+- N-scan: fixed `J = 30`, varying `N = 100, 200, ..., 1000`
+
+Each scan produces a 2x2 panel with MSE, average absolute bias, variance, and runtime.
+
+# Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+# Download the helper scripts and replace the example paths with your own local paths.
+
+# Load the required helper scripts. Replace the example paths with your own local paths.
+source("C:/Users/YourName/Desktop/BEP/R/rESEM-CC.R")
+source("C:/Users/YourName/Desktop/BEP/R/generation_function.R")
+
+library(MASS)
+library(lavaan)
+library(lslx)
+```
+
+# Helper functions
+
+```{r helper_functions}
+# Build the lslx model syntax for the orthogonal lslx model.
+build_lslx_model <- function(J, n_factors = 3) {
+  J_per_factor <- J / n_factors     # Number of primary items per factor
+  lines <- c()                      # Store model syntax lines
+
+  # Add primary loadings.
+  for (k in 1:n_factors) {
+    main_items <- paste0("x", ((k - 1) * J_per_factor + 1):(k * J_per_factor))
+    lines <- c(lines, paste0("f", k, " :=> ", paste(main_items, collapse = " + ")))
+  }
+
+  # Add penalized cross-loadings.
+  for (k in 1:n_factors) {
+    primary_items <- ((k - 1) * J_per_factor + 1):(k * J_per_factor)
+    other_items <- paste0("x", setdiff(1:J, primary_items))
+    lines <- c(lines, paste0("f", k, " :~> ", paste(other_items, collapse = " + ")))
+  }
+
+  # Fix factor variances to one.
+  for (k in 1:n_factors) {
+    lines <- c(lines, paste0("f", k, " <=> fix(1) * f", k))
+  }
+
+  # Fix factor covariances to zero for the orthogonal model.
+  for (i in 1:(n_factors - 1)) {
+    for (j in (i + 1):n_factors) {
+      lines <- c(lines, paste0("f", i, " <=> fix(0) * f", j))
+    }
+  }
+
+  paste(lines, collapse = "\n")
+}
+
+
+# Align estimated loadings to the true loading matrix.
+align_loadings <- function(Lambda_est, Lambda_true) {
+  n_factors <- ncol(Lambda_true)
+  cor_mat <- matrix(NA, n_factors, n_factors)
+
+  for (i in 1:n_factors) {
+    for (j in 1:n_factors) {
+      cor_mat[i, j] <- abs(cor(Lambda_est[, i], Lambda_true[, j]))
+    }
+  }
+
+  order_est <- rep(NA, n_factors)   # Matched factor order
+  used <- rep(FALSE, n_factors)     # Prevent duplicate matching
+
+  for (j in 1:n_factors) {
+    best_i <- which.max(cor_mat[, j] * (!used))
+    order_est[j] <- best_i
+    used[best_i] <- TRUE
+  }
+
+  Lambda_aligned <- Lambda_est[, order_est]
+
+  for (j in 1:n_factors) {
+    if (cor(Lambda_aligned[, j], Lambda_true[, j]) < 0) {
+      Lambda_aligned[, j] <- -Lambda_aligned[, j]
+    }
+  }
+
+  colnames(Lambda_aligned) <- paste0("f", 1:n_factors)
+  Lambda_aligned
+}
+
+
+# Fit lslx to one simulated dataset.
+run_lslx <- function(X, J, n_factors = 3, Lambda_true = NULL) {
+  X_df <- as.data.frame(scale(as.matrix(X)))   # Standardize observed data
+  colnames(X_df) <- paste0("x", 1:J)           # Variable names used in model syntax
+
+  model <- build_lslx_model(J = J, n_factors = n_factors)
+  lambda_grid <- seq(0.00, 0.10, 0.05)         # Candidate LASSO penalties
+
+  result <- tryCatch({
+    fit <- plsem(
+      model = model,
+      data = X_df,
+      penalty_method = "lasso",
+      lambda_grid = lambda_grid
+    )
+
+    loading_matrix <- fit$extract_coefficient_matrix(
+      selector = "bic",      # Select final solution by BIC
+      block = "y<-f"         # Extract loading matrix
+    )$g
+
+    rownames(loading_matrix) <- paste0("x", 1:J)
+    colnames(loading_matrix) <- paste0("f", 1:n_factors)
+
+    if (!is.null(Lambda_true)) {
+      loading_matrix <- align_loadings(loading_matrix, Lambda_true)
+    }
+
+    list(converged = TRUE, loadings = loading_matrix)
+  }, error = function(e) {
+    list(converged = FALSE, loadings = NULL, error_msg = conditionMessage(e))
+  })
+
+  result
+}
+
+
+# Fit cardinality-constrained Regularized ESEM to one simulated dataset.
+run_cc_esem <- function(X, J, n_factors = 3, card = NULL,
+                        nstarts = 20, Lambda_true = NULL) {
+  if (is.null(card)) {
+    card <- rep(J / n_factors, n_factors)       # True cardinality per factor
+  }
+
+  X_scaled <- scale(as.matrix(X))               # Standardize observed data
+
+  result <- tryCatch({
+    fit <- MULTISTART_CCrESEM(
+      DATA = X_scaled,
+      R = n_factors,
+      CARD = card,
+      MaxIter = 1000,
+      eps = 1e-6,
+      nstarts = nstarts
+    )
+
+    loading_matrix <- fit$loadings
+    rownames(loading_matrix) <- paste0("x", 1:J)
+    colnames(loading_matrix) <- paste0("f", 1:n_factors)
+
+    if (!is.null(Lambda_true)) {
+      loading_matrix <- align_loadings(loading_matrix, Lambda_true)
+    }
+
+    list(converged = fit$converged, loadings = loading_matrix)
+  }, error = function(e) {
+    list(converged = FALSE, loadings = NULL, error_msg = conditionMessage(e))
+  })
+
+  result
+}
+
+
+# Summarize MSE, AB, VAR, runtime for one condition.
+summarize_condition <- function(lslx_list, esem_list, lslx_time, esem_time, lslx_conv, Lambda_true) {
+  lslx_valid <- Filter(Negate(is.null), lslx_list)
+  esem_valid <- Filter(Negate(is.null), esem_list)
+
+  if (length(lslx_valid) > 1) {
+    lslx_arr <- simplify2array(lslx_valid)
+    lslx_mean_lm <- apply(lslx_arr, c(1, 2), mean)
+    lslx_mse_vec <- sapply(lslx_valid, function(lm) mean((lm - Lambda_true)^2))
+
+    lslx_mse <- mean(lslx_mse_vec)
+    lslx_mse_sd <- sd(lslx_mse_vec)
+    lslx_ab <- mean(abs(lslx_mean_lm - Lambda_true))
+    lslx_var <- mean(apply(lslx_arr, c(1, 2), var))
+  } else {
+    lslx_mse <- NA
+    lslx_mse_sd <- NA
+    lslx_ab <- NA
+    lslx_var <- NA
+  }
+
+  if (length(esem_valid) > 1) {
+    esem_arr <- simplify2array(esem_valid)
+    esem_mean_lm <- apply(esem_arr, c(1, 2), mean)
+    esem_mse_vec <- sapply(esem_valid, function(lm) mean((lm - Lambda_true)^2))
+
+    esem_mse <- mean(esem_mse_vec)
+    esem_mse_sd <- sd(esem_mse_vec)
+    esem_ab <- mean(abs(esem_mean_lm - Lambda_true))
+    esem_var <- mean(apply(esem_arr, c(1, 2), var))
+  } else {
+    esem_mse <- NA
+    esem_mse_sd <- NA
+    esem_ab <- NA
+    esem_var <- NA
+  }
+
+  data.frame(
+    lslx_mse_mean = lslx_mse,
+    lslx_mse_sd = lslx_mse_sd,
+    esem_mse_mean = esem_mse,
+    esem_mse_sd = esem_mse_sd,
+    lslx_ab = lslx_ab,
+    esem_ab = esem_ab,
+    lslx_var = lslx_var,
+    esem_var = esem_var,
+    lslx_time = mean(lslx_time),
+    esem_time = mean(esem_time),
+    lslx_conv_rate = mean(lslx_conv)
+  )
+}
+
+
+# Run one broad scan over J or N.
+run_scan <- function(scan_type = c("J", "N"),
+                     J_values = NULL,
+                     N_values = NULL,
+                     fixed_J = NULL,
+                     fixed_N = NULL,
+                     factor_corr = 0,
+                     n_rep = 50) {
+
+  scan_type <- match.arg(scan_type)
+  results <- list()
+
+  if (scan_type == "J") {
+    loop_values <- J_values
+  } else {
+    loop_values <- N_values
+  }
+
+  for (value in loop_values) {
+    J <- if (scan_type == "J") value else fixed_J
+    N <- if (scan_type == "N") value else fixed_N
+
+    cat("Running", scan_type, "scan | J =", J, "| N =", N, "\n")
+
+    lslx_lm_list <- vector("list", n_rep)
+    esem_lm_list <- vector("list", n_rep)
+    lslx_conv <- logical(n_rep)
+    lslx_time_vec <- numeric(n_rep)
+    esem_time_vec <- numeric(n_rep)
+
+    for (rep in 1:n_rep) {
+      dgp <- data_generation(
+        PL = 0.6,                       # True primary loading
+        nvar.factor = J / 3,            # Number of items per factor
+        nfactors = 3,                   # Number of latent factors
+        reliability = 0.36,             # Explained item variance, equal to 0.6^2
+        factor_corr = factor_corr,      # Population factor correlation
+        N = N,                          # Sample size
+        beta = c(0.5, 0.3, 0.2),        # Factor effects on generated outcome y
+        VAFy = 0.5,                     # Variance of y explained by factors
+        CL = FALSE                      # No population cross-loadings
+      )
+
+      t1 <- system.time({
+        r1 <- run_lslx(X = dgp$X, J = J, Lambda_true = dgp$Ptrue)
+      })
+
+      t2 <- system.time({
+        r2 <- run_cc_esem(X = dgp$X, J = J, Lambda_true = dgp$Ptrue)
+      })
+
+      lslx_conv[rep] <- r1$converged
+      lslx_lm_list[[rep]] <- if (r1$converged) r1$loadings else NULL
+      esem_lm_list[[rep]] <- if (r2$converged) r2$loadings else NULL
+      lslx_time_vec[rep] <- t1["elapsed"]
+      esem_time_vec[rep] <- t2["elapsed"]
+    }
+
+    summary_row <- summarize_condition(
+      lslx_list = lslx_lm_list,
+      esem_list = esem_lm_list,
+      lslx_time = lslx_time_vec,
+      esem_time = esem_time_vec,
+      lslx_conv = lslx_conv,
+      Lambda_true = dgp$Ptrue
+    )
+
+    results[[as.character(value)]] <- cbind(
+      data.frame(J = J, N = N, JN_ratio = round(J / N, 4)),
+      summary_row
+    )
+  }
+
+  out <- do.call(rbind, results)
+  rownames(out) <- NULL
+  out
+}
+```
+
+# Run broad scans
+
+```{r run_scans}
+set.seed(42)
+
+n_rep <- 50
+factor_corr <- 0
+
+# J-scan: fixed N, varying J.
+result_J_df <- run_scan(
+  scan_type = "J",
+  J_values = seq(9, 45, by = 3),
+  fixed_N = 300,
+  factor_corr = factor_corr,
+  n_rep = n_rep
+)
+
+# N-scan: fixed J, varying N.
+result_N_df <- run_scan(
+  scan_type = "N",
+  N_values = seq(100, 1000, by = 100),
+  fixed_J = 30,
+  factor_corr = factor_corr,
+  n_rep = n_rep
+)
+
+print(result_J_df, digits = 4)
+print(result_N_df, digits = 4)
+```
+
+# Save result tables
+
+```{r save_tables}
+save_dir <- file.path("results", "tables", "broad_scans")
+dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+
+write.csv(result_J_df, file.path(save_dir, "scan_J_corr0.csv"), row.names = FALSE)
+write.csv(result_N_df, file.path(save_dir, "scan_N_corr0.csv"), row.names = FALSE)
+
+cat("Saved result tables to:", save_dir, "\n")
+```
+
+# Plot function
+
+```{r plot_function}
+
+# Plot the 2x2 panel used in the thesis.
+plot_broad_scan_2x2 <- function(df, x_var, x_label, title_text) {
+  x <- df[[x_var]]
+
+  # Keep model colors consistent across all panels.
+  col_lslx <- "steelblue"
+  col_esem <- "red"
+
+  par(mfrow = c(2, 2), mar = c(5, 5, 4, 2), oma = c(0, 0, 2, 0))
+
+  # (a) MSE
+  ylim <- range(c(
+    df$lslx_mse_mean - df$lslx_mse_sd,
+    df$lslx_mse_mean + df$lslx_mse_sd,
+    df$esem_mse_mean - df$esem_mse_sd,
+    df$esem_mse_mean + df$esem_mse_sd
+  ), na.rm = TRUE)
+
+  plot(x, df$lslx_mse_mean,
+       type = "b", pch = 18, col = col_lslx, lty = 2, lwd = 2,
+       ylim = ylim, xlab = x_label, ylab = "MSE",
+       main = paste0("(a) MSE vs ", x_label), cex.main = 1.1)
+
+  polygon(c(x, rev(x)),
+          c(df$lslx_mse_mean + df$lslx_mse_sd,
+            rev(df$lslx_mse_mean - df$lslx_mse_sd)),
+          col = adjustcolor(col_lslx, 0.15), border = NA)
+
+  lines(x, df$esem_mse_mean,
+        type = "b", pch = 17, col = col_esem, lty = 2, lwd = 2)
+
+  polygon(c(x, rev(x)),
+          c(df$esem_mse_mean + df$esem_mse_sd,
+            rev(df$esem_mse_mean - df$esem_mse_sd)),
+          col = adjustcolor(col_esem, 0.15), border = NA)
+
+  legend("topright", legend = c("lslx", "CC-ESEM"),
+         col = c(col_lslx, col_esem), lty = 2, pch = c(18, 17),
+         lwd = 2, bty = "n", cex = 0.9)
+
+  # (b) Average absolute bias
+  ylim <- range(c(df$lslx_ab, df$esem_ab), na.rm = TRUE)
+  ylim <- ylim + c(-0.02, 0.08) * diff(ylim)
+
+  plot(x, df$lslx_ab,
+       type = "b", pch = 18, col = col_lslx, lty = 2, lwd = 2,
+       ylim = ylim, xlab = x_label, ylab = "Average Absolute Bias",
+       main = paste0("(b) AB vs ", x_label), cex.main = 1.1)
+
+  lines(x, df$esem_ab,
+        type = "b", pch = 17, col = col_esem, lty = 2, lwd = 2)
+
+  legend("topright", legend = c("lslx", "CC-ESEM"),
+         col = c(col_lslx, col_esem), lty = 2, pch = c(18, 17),
+         lwd = 2, bty = "n", cex = 0.9)
+
+  # (c) Variance
+  ylim <- range(c(df$lslx_var, df$esem_var), na.rm = TRUE)
+  ylim <- ylim + c(-0.02, 0.08) * diff(ylim)
+
+  plot(x, df$lslx_var,
+       type = "b", pch = 18, col = col_lslx, lty = 2, lwd = 2,
+       ylim = ylim, xlab = x_label, ylab = "Average Variance",
+       main = paste0("(c) VAR vs ", x_label), cex.main = 1.1)
+
+  lines(x, df$esem_var,
+        type = "b", pch = 17, col = col_esem, lty = 2, lwd = 2)
+
+  legend("topright", legend = c("lslx", "CC-ESEM"),
+         col = c(col_lslx, col_esem), lty = 2, pch = c(18, 17),
+         lwd = 2, bty = "n", cex = 0.9)
+
+  # (d) Runtime
+  ylim <- c(0, max(df$lslx_time, df$esem_time, na.rm = TRUE) * 1.1)
+
+  plot(x, df$lslx_time,
+       type = "b", pch = 18, col = col_lslx, lty = 2, lwd = 2,
+       ylim = ylim, xlab = x_label, ylab = "Runtime (sec)",
+       main = paste0("(d) Runtime vs ", x_label), cex.main = 1.1)
+
+  lines(x, df$esem_time,
+        type = "b", pch = 17, col = col_esem, lty = 2, lwd = 2)
+
+  legend("topleft", legend = c("lslx", "CC-ESEM"),
+         col = c(col_lslx, col_esem), lty = 2, pch = c(18, 17),
+         lwd = 2, bty = "n", cex = 0.9)
+
+  mtext(title_text, outer = TRUE, cex = 1.1, font = 2)
+  par(mfrow = c(1, 1))
+}
+```
+
+# J-scan figure
+
+```{r plot_j_scan, fig.width=9, fig.height=7}
+plot_broad_scan_2x2(
+  df = result_J_df,
+  x_var = "J",
+  x_label = "J",
+  title_text = "J-scan Summary (factor_corr = 0, fixed N = 300, 50 reps)"
+)
+```
+
+# N-scan figure
+
+```{r plot_n_scan, fig.width=9, fig.height=7}
+plot_broad_scan_2x2(
+  df = result_N_df,
+  x_var = "N",
+  x_label = "N",
+  title_text = "N-scan Summary (factor_corr = 0, fixed J = 30, 50 reps)"
+)
+```
+
+

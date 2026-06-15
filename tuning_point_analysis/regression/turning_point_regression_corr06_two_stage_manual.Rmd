@@ -1,0 +1,356 @@
+---
+title: "Two-stage turning-point interval regression: rho = 0.6"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+# Purpose
+
+This file reproduces the two-stage interval regression for the turning-point analysis under the stronger factor-correlation condition, `rho = 0.6`.
+
+The turning intervals are manually recorded from the local refinement scans.  
+This file does **not** rerun the simulations. It only fits the interval regressions and produces the two-stage regression figure.
+
+The two stages are:
+
+- Stage 1: `J = 15` to `J = 39`, decreasing turning boundary.
+- Stage 2: `J = 42` to `J = 60`, increasing turning boundary.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Manually recorded turning intervals
+
+```{r data}
+# ------------------------------------------------------------
+# Stage 1: J = 15 to J = 39
+# ------------------------------------------------------------
+interval_df1 <- data.frame(
+  J   = c(15, 18, 21, 24, 27, 30, 33, 36, 39),
+
+  # Lower and upper bounds of the manually identified turning J/N interval.
+  # For J = 39, the lower bound is treated as approximately open-ended toward 0.
+  lo  = c(15/260, 18/320, 21/420, 24/600, 27/800,
+          30/1000, 33/1800, 36/4000, 39/10000000),
+
+  hi  = c(15/180, 18/260, 21/360, 24/450, 27/550,
+          30/700, 33/1200, 36/2000, 39/2000)
+)
+
+interval_df1$mid <- (interval_df1$lo + interval_df1$hi) / 2
+interval_df1$stage <- "Stage 1: J = 15-39"
+
+# ------------------------------------------------------------
+# Stage 2: J = 42 to J = 60
+# ------------------------------------------------------------
+interval_df2 <- data.frame(
+  J   = c(42, 45, 48, 51, 54, 57, 60),
+
+  lo  = c(42/2000, 45/1500, 48/1000, 51/900,
+          54/800, 57/700, 60/700),
+
+  hi  = c(42/1500, 45/1000, 48/800, 51/600,
+          54/600, 57/500, 60/500)
+)
+
+interval_df2$mid <- (interval_df2$lo + interval_df2$hi) / 2
+interval_df2$stage <- "Stage 2: J = 42-60"
+
+interval_df <- rbind(interval_df1, interval_df2)
+
+cat("=== Stage 1 manually recorded intervals ===\n")
+print(interval_df1, row.names = FALSE, digits = 5)
+
+cat("\n=== Stage 2 manually recorded intervals ===\n")
+print(interval_df2, row.names = FALSE, digits = 5)
+```
+
+# Fit two-stage interval regressions
+
+```{r fit}
+# Stage 1 regressions
+fit_mid1 <- lm(mid ~ J, data = interval_df1)
+fit_lo1  <- lm(lo  ~ J, data = interval_df1)
+fit_hi1  <- lm(hi  ~ J, data = interval_df1)
+
+# Stage 2 regressions
+fit_mid2 <- lm(mid ~ J, data = interval_df2)
+fit_lo2  <- lm(lo  ~ J, data = interval_df2)
+fit_hi2  <- lm(hi  ~ J, data = interval_df2)
+
+cat("=== Stage 1 Midpoint Regression: J = 15-39 ===\n")
+print(summary(fit_mid1))
+
+cat("\n=== Stage 1 Lower Bound Regression: J = 15-39 ===\n")
+print(summary(fit_lo1))
+
+cat("\n=== Stage 1 Upper Bound Regression: J = 15-39 ===\n")
+print(summary(fit_hi1))
+
+cat("\n=== Stage 2 Midpoint Regression: J = 42-60 ===\n")
+print(summary(fit_mid2))
+
+cat("\n=== Stage 2 Lower Bound Regression: J = 42-60 ===\n")
+print(summary(fit_lo2))
+
+cat("\n=== Stage 2 Upper Bound Regression: J = 42-60 ===\n")
+print(summary(fit_hi2))
+
+regression_summary <- data.frame(
+  stage = c("Stage 1", "Stage 1", "Stage 1",
+            "Stage 2", "Stage 2", "Stage 2"),
+  bound = c("midpoint", "lower", "upper",
+            "midpoint", "lower", "upper"),
+  intercept = c(coef(fit_mid1)[1], coef(fit_lo1)[1], coef(fit_hi1)[1],
+                coef(fit_mid2)[1], coef(fit_lo2)[1], coef(fit_hi2)[1]),
+  slope = c(coef(fit_mid1)[2], coef(fit_lo1)[2], coef(fit_hi1)[2],
+            coef(fit_mid2)[2], coef(fit_lo2)[2], coef(fit_hi2)[2]),
+  r_squared = c(summary(fit_mid1)$r.squared,
+                summary(fit_lo1)$r.squared,
+                summary(fit_hi1)$r.squared,
+                summary(fit_mid2)$r.squared,
+                summary(fit_lo2)$r.squared,
+                summary(fit_hi2)$r.squared),
+  adj_r_squared = c(summary(fit_mid1)$adj.r.squared,
+                    summary(fit_lo1)$adj.r.squared,
+                    summary(fit_hi1)$adj.r.squared,
+                    summary(fit_mid2)$adj.r.squared,
+                    summary(fit_lo2)$adj.r.squared,
+                    summary(fit_hi2)$adj.r.squared)
+)
+
+cat("\n=== Compact regression summary ===\n")
+print(regression_summary, row.names = FALSE, digits = 5)
+```
+
+# Plot: two panels
+
+This plot shows the two stages separately. It is useful for checking the decreasing and increasing trends independently.
+
+```{r plot-two-panels, fig.width=10, fig.height=5}
+plot_two_panels <- function(interval_df1, interval_df2,
+                            fit_mid1, fit_lo1, fit_hi1,
+                            fit_mid2, fit_lo2, fit_hi2) {
+
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par))
+
+  par(mfrow = c(1, 2), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+
+  # ----------------------------------------------------------
+  # Panel 1: Stage 1
+  # ----------------------------------------------------------
+  J_seq1    <- seq(14, 40, length.out = 100)
+  pred_mid1 <- predict(fit_mid1, newdata = data.frame(J = J_seq1), interval = "confidence")
+  pred_lo1  <- predict(fit_lo1,  newdata = data.frame(J = J_seq1))
+  pred_hi1  <- predict(fit_hi1,  newdata = data.frame(J = J_seq1))
+
+  plot(NULL,
+       xlim = c(14, 40),
+       ylim = c(0, max(interval_df1$hi, na.rm = TRUE) * 1.2),
+       xlab = "J",
+       ylab = "Estimated turning J/N",
+       main = "J = 15-39 (decreasing)")
+
+  lines(J_seq1, pred_lo1, col = "#D85A32", lwd = 1.5, lty = 2)
+  lines(J_seq1, pred_hi1, col = "#D85A32", lwd = 1.5, lty = 2)
+
+  polygon(c(J_seq1, rev(J_seq1)),
+          c(pred_mid1[, "lwr"], rev(pred_mid1[, "upr"])),
+          col = adjustcolor("#3266AD", 0.15),
+          border = NA)
+
+  lines(J_seq1, pred_mid1[, "fit"], col = "#3266AD", lwd = 2)
+
+  arrows(x0 = interval_df1$J, y0 = interval_df1$lo,
+         x1 = interval_df1$J, y1 = interval_df1$hi,
+         angle = 90, code = 3, length = 0.04,
+         col = "#D85A32", lwd = 1.5)
+
+  points(interval_df1$J, interval_df1$mid,
+         pch = 16, col = "#3266AD", cex = 1.4)
+
+  text(interval_df1$J, interval_df1$hi,
+       labels = paste0("J=", interval_df1$J),
+       pos = 3, cex = 0.75, col = "gray40")
+
+  legend("topright", bty = "n", cex = 0.8,
+         legend = c(
+           paste0("Midpoint slope = ", round(coef(fit_mid1)[2], 5),
+                  ", R² = ", round(summary(fit_mid1)$r.squared, 3)),
+           paste0("Upper slope = ", round(coef(fit_hi1)[2], 5),
+                  ", R² = ", round(summary(fit_hi1)$r.squared, 3)),
+           paste0("Lower slope = ", round(coef(fit_lo1)[2], 5),
+                  ", R² = ", round(summary(fit_lo1)$r.squared, 3))
+         ),
+         col = c("#3266AD", "#D85A32", "#D85A32"),
+         lty = c(1, 2, 2),
+         lwd = c(2, 1.5, 1.5))
+
+  # ----------------------------------------------------------
+  # Panel 2: Stage 2
+  # ----------------------------------------------------------
+  J_seq2    <- seq(41, 61, length.out = 100)
+  pred_mid2 <- predict(fit_mid2, newdata = data.frame(J = J_seq2), interval = "confidence")
+  pred_lo2  <- predict(fit_lo2,  newdata = data.frame(J = J_seq2))
+  pred_hi2  <- predict(fit_hi2,  newdata = data.frame(J = J_seq2))
+
+  plot(NULL,
+       xlim = c(41, 61),
+       ylim = c(0, max(interval_df2$hi, na.rm = TRUE) * 1.2),
+       xlab = "J",
+       ylab = "Estimated turning J/N",
+       main = "J = 42-60 (increasing)")
+
+  lines(J_seq2, pred_lo2, col = "#D85A32", lwd = 1.5, lty = 2)
+  lines(J_seq2, pred_hi2, col = "#D85A32", lwd = 1.5, lty = 2)
+
+  polygon(c(J_seq2, rev(J_seq2)),
+          c(pred_mid2[, "lwr"], rev(pred_mid2[, "upr"])),
+          col = adjustcolor("#3266AD", 0.15),
+          border = NA)
+
+  lines(J_seq2, pred_mid2[, "fit"], col = "#3266AD", lwd = 2)
+
+  arrows(x0 = interval_df2$J, y0 = interval_df2$lo,
+         x1 = interval_df2$J, y1 = interval_df2$hi,
+         angle = 90, code = 3, length = 0.04,
+         col = "#D85A32", lwd = 1.5)
+
+  points(interval_df2$J, interval_df2$mid,
+         pch = 16, col = "#3266AD", cex = 1.4)
+
+  text(interval_df2$J, interval_df2$hi,
+       labels = paste0("J=", interval_df2$J),
+       pos = 3, cex = 0.75, col = "gray40")
+
+  legend("topleft", bty = "n", cex = 0.8,
+         legend = c(
+           paste0("Midpoint slope = ", round(coef(fit_mid2)[2], 5),
+                  ", R² = ", round(summary(fit_mid2)$r.squared, 3)),
+           paste0("Upper slope = ", round(coef(fit_hi2)[2], 5),
+                  ", R² = ", round(summary(fit_hi2)$r.squared, 3)),
+           paste0("Lower slope = ", round(coef(fit_lo2)[2], 5),
+                  ", R² = ", round(summary(fit_lo2)$r.squared, 3))
+         ),
+         col = c("#3266AD", "#D85A32", "#D85A32"),
+         lty = c(1, 2, 2),
+         lwd = c(2, 1.5, 1.5))
+
+  mtext("Two-stage interval regression under rho = 0.6",
+        outer = TRUE, cex = 1.2, font = 2)
+}
+
+plot_two_panels(interval_df1, interval_df2,
+                fit_mid1, fit_lo1, fit_hi1,
+                fit_mid2, fit_lo2, fit_hi2)
+```
+
+# Plot: combined two-stage figure
+
+This combined plot corresponds to the main two-stage interval regression figure.
+
+```{r plot-combined, fig.width=9, fig.height=5.5}
+plot_combined_two_stage <- function(interval_df1, interval_df2,
+                                    fit_mid1, fit_lo1, fit_hi1,
+                                    fit_mid2, fit_lo2, fit_hi2) {
+
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par))
+
+  par(mar = c(4, 4, 3, 1))
+
+  J_seq1    <- seq(14, 40, length.out = 100)
+  pred_mid1 <- predict(fit_mid1, newdata = data.frame(J = J_seq1), interval = "confidence")
+  pred_lo1  <- predict(fit_lo1,  newdata = data.frame(J = J_seq1))
+  pred_hi1  <- predict(fit_hi1,  newdata = data.frame(J = J_seq1))
+
+  J_seq2    <- seq(41, 61, length.out = 100)
+  pred_mid2 <- predict(fit_mid2, newdata = data.frame(J = J_seq2), interval = "confidence")
+  pred_lo2  <- predict(fit_lo2,  newdata = data.frame(J = J_seq2))
+  pred_hi2  <- predict(fit_hi2,  newdata = data.frame(J = J_seq2))
+
+  ylim_all <- c(0, max(c(interval_df1$hi, interval_df2$hi), na.rm = TRUE) * 1.2)
+
+  plot(NULL,
+       xlim = c(14, 62),
+       ylim = ylim_all,
+       xlab = "J",
+       ylab = "Estimated turning J/N",
+       main = "Interval Regression: Turning J/N vs J (two stage)")
+
+  # Stage 1
+  lines(J_seq1, pred_lo1, col = "#D85A32", lwd = 1.5, lty = 2)
+  lines(J_seq1, pred_hi1, col = "#D85A32", lwd = 1.5, lty = 2)
+
+  polygon(c(J_seq1, rev(J_seq1)),
+          c(pred_mid1[, "lwr"], rev(pred_mid1[, "upr"])),
+          col = adjustcolor("#3266AD", 0.15),
+          border = NA)
+
+  lines(J_seq1, pred_mid1[, "fit"], col = "#3266AD", lwd = 2)
+
+  arrows(x0 = interval_df1$J, y0 = interval_df1$lo,
+         x1 = interval_df1$J, y1 = interval_df1$hi,
+         angle = 90, code = 3, length = 0.04,
+         col = "#D85A32", lwd = 1.5)
+
+  points(interval_df1$J, interval_df1$mid,
+         pch = 16, col = "#3266AD", cex = 1.4)
+
+  text(interval_df1$J, interval_df1$hi,
+       labels = paste0("J=", interval_df1$J),
+       pos = 3, cex = 0.72, col = "gray40")
+
+  # Stage 2
+  lines(J_seq2, pred_lo2, col = "#E76F51", lwd = 1.5, lty = 2)
+  lines(J_seq2, pred_hi2, col = "#E76F51", lwd = 1.5, lty = 2)
+
+  polygon(c(J_seq2, rev(J_seq2)),
+          c(pred_mid2[, "lwr"], rev(pred_mid2[, "upr"])),
+          col = adjustcolor("#2A9D8F", 0.15),
+          border = NA)
+
+  lines(J_seq2, pred_mid2[, "fit"], col = "#2A9D8F", lwd = 2)
+
+  arrows(x0 = interval_df2$J, y0 = interval_df2$lo,
+         x1 = interval_df2$J, y1 = interval_df2$hi,
+         angle = 90, code = 3, length = 0.04,
+         col = "#E76F51", lwd = 1.5)
+
+  points(interval_df2$J, interval_df2$mid,
+         pch = 17, col = "#2A9D8F", cex = 1.4)
+
+  text(interval_df2$J, interval_df2$hi,
+       labels = paste0("J=", interval_df2$J),
+       pos = 3, cex = 0.72, col = "gray40")
+
+  legend("topleft", bty = "n", cex = 0.78,
+         legend = c(
+           paste0("J=15-39 Mid slope = ", round(coef(fit_mid1)[2], 5),
+                  ", R² = ", round(summary(fit_mid1)$r.squared, 3)),
+           paste0("J=15-39 Up slope = ", round(coef(fit_hi1)[2], 5),
+                  ", R² = ", round(summary(fit_hi1)$r.squared, 3)),
+           paste0("J=15-39 Low slope = ", round(coef(fit_lo1)[2], 5),
+                  ", R² = ", round(summary(fit_lo1)$r.squared, 3)),
+           paste0("J=42-60 Mid slope = ", round(coef(fit_mid2)[2], 5),
+                  ", R² = ", round(summary(fit_mid2)$r.squared, 3)),
+           paste0("J=42-60 Up slope = ", round(coef(fit_hi2)[2], 5),
+                  ", R² = ", round(summary(fit_hi2)$r.squared, 3)),
+           paste0("J=42-60 Low slope = ", round(coef(fit_lo2)[2], 5),
+                  ", R² = ", round(summary(fit_lo2)$r.squared, 3))
+         ),
+         col = c("#3266AD", "#D85A32", "#D85A32",
+                 "#2A9D8F", "#E76F51", "#E76F51"),
+         lty = c(1, 2, 2, 1, 2, 2),
+         pch = c(16, NA, NA, 17, NA, NA),
+         lwd = c(2, 1.5, 1.5, 2, 1.5, 1.5))
+}
+
+plot_combined_two_stage(interval_df1, interval_df2,
+                        fit_mid1, fit_lo1, fit_hi1,
+                        fit_mid2, fit_lo2, fit_hi2)
+```

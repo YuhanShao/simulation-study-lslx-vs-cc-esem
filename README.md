@@ -11,7 +11,9 @@ The thesis compares two methods for estimating factor loading structures in expl
 
 The purpose of the simulation study is to examine how the relative performance of these two methods changes across different dimensionality conditions, sample sizes, and factor-correlation structures.
 
-## Repository structure
+## Repository structure and file descriptions
+
+This repository is organized by analysis type and factor-correlation condition. The main folders are `function/`, `tuning_point_analysis/`, and `figures/`.
 
 ```text
 simulation-study-lslx-vs-cc-esem/
@@ -35,272 +37,329 @@ simulation-study-lslx-vs-cc-esem/
 └── .gitignore
 ```
 
-## Folder contents
+## Root files
 
-Root files
-README.md
+### `README.md`
 
 This file explains the purpose of the repository, the folder structure, and how to run the code.
 
-.gitignore
+### `.gitignore`
 
 This file tells Git which temporary or unnecessary files should not be tracked.
 
-HDLSS_CCESEM_corr0_03_06.Rmd
+### `HDLSS_CCESEM_corr0_03_06.Rmd`
 
-This is the supplementary HDLSS analysis script. It only runs cardinality-constrained Regularized ESEM, not lslx, because the lslx simulations become too time-consuming in the high-dimensional low-sample-size settings.
+This file contains the supplementary HDLSS analysis for cardinality-constrained Regularized ESEM only.
 
-This script includes supplementary analyses for:
+It does not compare lslx and CC-ESEM. Instead, it studies how CC-ESEM behaves under high-dimensional low-sample-size settings.
 
+This file includes four supplementary scan types:
+
+```text
 fixed N, varying J
 fixed J, varying N
 fixed J/N ratio, varying J
 fixed J, varying J/N ratio
+```
 
-It compares the behavior of CC-ESEM under the three factor-correlation conditions:
+The analyses are repeated for three factor-correlation conditions:
 
-corr = 0
-corr = 0.3
-corr = 0.6
-function/
+```text
+rho = 0
+rho = 0.3
+rho = 0.6
+```
+
+## `function/`
 
 This folder contains the helper functions used by the simulation scripts.
 
-rESEM-CC.R
+### `rESEM-CC.R`
 
-This file contains the implementation of cardinality-constrained Regularized ESEM. The main simulation scripts call this file when fitting the CC-ESEM model.
+This file contains the implementation of cardinality-constrained Regularized ESEM.
 
-generation_function.R
+The main simulation scripts call this file when fitting the CC-ESEM model.
 
-This file contains the data-generation function used in the simulations. It generates data from the common factor model used in the thesis.
+### `generation_function.R`
 
-The generated data follow the main simulation design:
+This file contains the data-generation function used in the simulations.
 
-three latent factors
-simple loading structure
-primary loading = 0.6
-cross-loadings = 0
-factor correlations = 0, 0.3, or 0.6
-tuning_point_analysis/
+It generates data from the common factor model used in the thesis. The generated data follow a simple loading structure with three latent factors, primary loadings equal to `0.6`, and population cross-loadings equal to `0`.
+
+## `tuning_point_analysis/`
 
 This folder contains the main simulation scripts for comparing lslx and cardinality-constrained Regularized ESEM.
 
 The subfolders are organized by factor-correlation condition:
 
-corr_00  factor correlation = 0
-corr_03  factor correlation = 0.3
-corr_06  factor correlation = 0.6
+```text
+corr_00    factor correlation rho = 0
+corr_03    factor correlation rho = 0.3
+corr_06    factor correlation rho = 0.6
+```
 
 Each condition folder contains two types of scripts:
 
+```text
 broad scan scripts
 local refinement scripts
+```
 
-The broad scan scripts produce the 2x2 summary figures for MSE, AB, VAR, and runtime.
+The broad scan scripts produce the 2x2 summary figures for MSE, average absolute bias, variance, and runtime.
 
 The local refinement scripts zoom in on the turning-point regions where the MSE advantage changes from one method to the other.
 
-tuning_point_analysis/corr_00/
+## `tuning_point_analysis/corr_00/`
 
-This folder contains the scripts for the orthogonal factor condition, where the population factor correlation is:
+This folder contains the scripts for the orthogonal factor condition:
 
+```text
 rho = 0
-broad_scan_figures_corr00.Rmd
+```
 
-This script runs the broad J-scan and N-scan for rho = 0.
+### `broad_scan_figures_corr00.Rmd`
 
-It produces the 2x2 summary panels showing:
+This script runs the broad J-scan and N-scan for `rho = 0`.
 
+It produces the 2x2 summary figures showing:
+
+```text
 MSE
 average absolute bias
 variance
 runtime
-full_analysis_0_CC_J15to30.Rmd
+```
+
+### `full_analysis_0_CC_J15to30.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0
 J = 15 to J = 30
+```
 
-It is used to inspect where the MSE difference between lslx and CC-ESEM changes sign in the lower-J range.
+It is used to inspect the turning-point pattern in the lower-J range.
 
-full_analysis_0_CC_J33to45.Rmd
+### `full_analysis_0_CC_J33to45.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0
 J = 33 to J = 45
+```
 
 It covers the middle-J range of the turning-point analysis.
 
-full_analysis_0_CC_J48to60.Rmd
+### `full_analysis_0_CC_J48to60.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0
 J = 48 to J = 60
+```
 
 It covers the higher-J range of the turning-point analysis.
 
-tuning_point_analysis/corr_03/
+## `tuning_point_analysis/corr_03/`
 
-This folder contains the scripts for the moderately correlated factor condition, where the population factor correlation is:
+This folder contains the scripts for the moderately correlated factor condition:
 
+```text
 rho = 0.3
-broad_scan_figures_corr03.Rmd
+```
 
-This script runs the broad J-scan and N-scan for rho = 0.3.
+### `broad_scan_figures_corr03.Rmd`
 
-It produces the 2x2 summary panels for MSE, average absolute bias, variance, and runtime.
+This script runs the broad J-scan and N-scan for `rho = 0.3`.
 
-full_analysis_0_3_J15to30.Rmd
+It produces the 2x2 summary figures for MSE, average absolute bias, variance, and runtime.
+
+### `full_analysis_0_3_J15to30.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0.3
 J = 15 to J = 30
+```
 
-It is used to identify the turning intervals in the lower-J range.
+It is used to inspect the turning-point pattern in the lower-J range.
 
-full_analysis_0_3_J33to45.Rmd
+### `full_analysis_0_3_J33to45.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0.3
 J = 33 to J = 45
+```
 
 It covers the middle-J range.
 
-full_analysis_0_3_J48to60.Rmd
+### `full_analysis_0_3_J48to60.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0.3
 J = 48 to J = 60
+```
 
 It covers the higher-J range.
 
-tuning_point_analysis/corr_06/
+## `tuning_point_analysis/corr_06/`
 
-This folder contains the scripts for the strongly correlated factor condition, where the population factor correlation is:
+This folder contains the scripts for the strongly correlated factor condition:
 
+```text
 rho = 0.6
-broad_scan_figures_corr06.Rmd
+```
 
-This script runs the broad J-scan and N-scan for rho = 0.6.
+### `broad_scan_figures_corr06.Rmd`
 
-It produces the 2x2 summary panels for MSE, average absolute bias, variance, and runtime.
+This script runs the broad J-scan and N-scan for `rho = 0.6`.
 
-full_analysis_0_6_J15to30.Rmd
+It produces the 2x2 summary figures for MSE, average absolute bias, variance, and runtime.
+
+### `full_analysis_0_6_J15to30.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0.6
 J = 15 to J = 30
+```
 
 It covers the lower-J range.
 
-full_analysis_0_6_J33to45.Rmd
+### `full_analysis_0_6_J33to45.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0.6
 J = 33 to J = 45
+```
 
-It covers the middle-J range. This file also includes additional checks for selected middle-J cases, such as J = 36 and J = 39, because the rho = 0.6 condition shows a more complex turning-point pattern.
+It covers the middle-J range. This file also includes additional checks for selected middle-J cases, such as `J = 36` and `J = 39`, because the `rho = 0.6` condition shows a more complex turning-point pattern.
 
-full_analysis_0_6_J48to60.Rmd
+### `full_analysis_0_6_J48to60.Rmd`
 
 This script runs the local refinement scans for:
 
+```text
 rho = 0.6
 J = 48 to J = 60
+```
 
 It covers the higher-J range.
 
-0_6_shrink_48_60_500_1000.Rmd
+### `0_6_shrink_48_60_500_1000.Rmd`
 
 This is an additional narrowed-range script for the strongly correlated condition.
 
 It focuses on:
 
+```text
 rho = 0.6
 J = 48 to J = 60
 N = 500 to N = 1000
+```
 
-This file was used to inspect the higher-J turning pattern more closely after the broad local refinement scan.
+This file was used to inspect the higher-J turning pattern more closely after the broader local refinement scan.
 
-00.txt
+### `00.txt`
 
-This is a placeholder file that was used to create or preserve the folder structure on GitHub. It is not part of the analysis.
+This is a placeholder file that was used to create or preserve the folder structure on GitHub.
 
-tuning_point_analysis/regression/
+It is not part of the analysis.
 
-This folder contains the scripts used to summarize the turning intervals with simple interval-based regression.
+## `tuning_point_analysis/regression/`
+
+This folder contains the scripts used to summarize the turning intervals with interval-based regression.
 
 These scripts do not rerun the full simulations. Instead, they use the turning intervals obtained from the local refinement scans.
 
-turning_point_regression_corr00_manual.Rmd
+### `turning_point_regression_corr00_manual.Rmd`
 
 This script summarizes the turning intervals for:
 
+```text
 rho = 0
+```
 
-It fits a regression to describe how the turning interval changes as J increases.
+It fits a regression to describe how the turning interval changes as `J` increases.
 
-turning_point_regression_corr03_manual.Rmd
+### `turning_point_regression_corr03_manual.Rmd`
 
 This script summarizes the turning intervals for:
 
+```text
 rho = 0.3
+```
 
-It is used to describe the turning-point pattern under the moderately correlated condition.
+It describes the turning-point pattern under the moderately correlated condition.
 
-turning_point_regression_corr06_two_stage_manual.Rmd
+### `turning_point_regression_corr06_two_stage_manual.Rmd`
 
 This script summarizes the turning intervals for:
 
+```text
 rho = 0.6
+```
 
-The rho = 0.6 condition shows a two-stage pattern, so this script treats the pattern differently from the rho = 0 and rho = 0.3 cases.
+The `rho = 0.6` condition shows a two-stage pattern, so this script treats it differently from the `rho = 0` and `rho = 0.3` cases.
 
-figures/
+## `figures/`
 
 This folder contains the result figures and supplementary documents used in the thesis.
 
-The figures are provided so that the main results can be inspected without rerunning all simulations.
+The figures are included so that the main results can be inspected without rerunning all simulations.
 
-figures/broad_scans/
+## `figures/broad_scans/`
 
 This folder contains the broad-scan figures.
 
 These figures correspond to the J-scan and N-scan summary plots for:
 
+```text
 rho = 0
 rho = 0.3
 rho = 0.6
+```
 
 Each figure is a 2x2 panel showing:
 
+```text
 MSE
 average absolute bias
 variance
 runtime
-figures/turning_point/
+```
+
+## `figures/turning_point/`
 
 This folder contains the supplementary turning-point plots.
 
-The local refinement scan produces many plots, so some of these figures are also organized in Word documents to make them easier to inspect. These documents collect the large set of turning-point plots by factor-correlation condition and scan range.
+The local refinement scans produce many plots, so some of the turning-point figures are also organized in Word documents to make them easier to inspect.
 
-figures/hdlss_supplementary/
+These materials are organized by factor-correlation condition and scan range.
+
+## `figures/hdlss_supplementary/`
 
 This folder contains the supplementary HDLSS figures for CC-ESEM only.
 
-These figures correspond to the supplementary analyses in:
+These figures correspond to the analyses in:
 
+```text
 HDLSS_CCESEM_corr0_03_06.Rmd
+```
 
 They show the behavior of CC-ESEM under high-dimensional low-sample-size settings across different factor-correlation conditions.
+
 
 ## How to download the code
 

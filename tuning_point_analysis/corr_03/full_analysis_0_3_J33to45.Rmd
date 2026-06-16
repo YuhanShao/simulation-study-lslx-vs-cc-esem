@@ -171,11 +171,11 @@ n_rep <- 50    # number of Monte Carlo replications per (J, N) cell
 
 # N grids to scan for each value of J
 scan_grid <- list(
-  "33" = seq(400,  800, by = 50),
-  "36" = seq(500,  800, by = 50),
-  "39" = seq(600, 1000, by = 50),
-  "42" = seq(750, 1000, by = 50),
-  "45" = seq(750, 1200, by = 50)
+  "33" = seq(250,  550, by = 50),
+  "36" = seq(300,  600, by = 50),
+  "39" = seq(350, 700, by = 50),
+  "42" = seq(400, 750, by = 50),
+  "45" = seq(400, 900, by = 50)
 )
 
 J_seq_main <- c(33, 36, 39, 42, 45)

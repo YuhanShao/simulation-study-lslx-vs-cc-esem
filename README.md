@@ -290,7 +290,6 @@ To reproduce them from code:
 1. Run the corresponding R Markdown script.
 2. Check that the helper files in `function/` are correctly sourced.
 3. Re-run the plotting chunks in the script.
-4. Save or export the figures from RStudio if needed.
 
 Because the simulations involve numerical optimization and multi-start estimation, exact runtime and small numerical differences may vary across computers, R versions, and package versions.
 

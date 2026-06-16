@@ -271,11 +271,6 @@ N = 500 to N = 1000
 
 This file was used to inspect the higher-J turning pattern more closely after the broader local refinement scan.
 
-### `00.txt`
-
-This is a placeholder file that was used to create or preserve the folder structure on GitHub.
-
-It is not part of the analysis.
 
 ## `tuning_point_analysis/regression/`
 
@@ -344,7 +339,7 @@ runtime
 
 This folder contains the supplementary turning-point plots.
 
-The local refinement scans produce many plots, so some of the turning-point figures are also organized in Word documents to make them easier to inspect.
+The local refinement scans produce many plots, so the turning-point figures are organized in Word documents to make them easier to inspect.
 
 These materials are organized by factor-correlation condition and scan range.
 
